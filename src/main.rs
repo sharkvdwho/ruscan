@@ -1,5 +1,4 @@
-
-mod args; 
+mod args;
 
 use args::*;
 use clap::Parser;
@@ -7,6 +6,22 @@ use std::thread::{JoinHandle, spawn};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 use std::str::FromStr;
+use dns_lookup::lookup_host; //lookup_addr for dns lookup from 
+
+const RED : &str = "\x1b[31m";
+const GREEN : &str = "\x1b[32m";
+const BLUE : &str = "\x1b[34m";
+const RESET : &str = "\x1b[0m";
+const STARING: &str = r"
+ ____  _   _ ____   ____    _    _   _ 
+|  _ \| | | / ___| / ___|  / \  | \ | |
+| |_) | | | \___ \| |     / _ \ |  \| |
+|  _ <| |_| |___) | |___ / ___ \| |\  |
+|_| \_\\___/|____/ \____/_/   \_\_| \_|
+
+                          by sharkvdwho
+                                      
+                                      ";
 
 fn init_port_scan(addr: &String, list: Vec<u16>){
     let mut handles: Vec<JoinHandle<()>> = vec![];
@@ -15,8 +30,8 @@ fn init_port_scan(addr: &String, list: Vec<u16>){
         let handle: JoinHandle<()> = spawn(move || {
             let socker_addr: SocketAddr = SocketAddr::from_str(host.as_str()).unwrap();
             match TcpStream::connect_timeout(&socker_addr, Duration::from_secs(3)) {
-                Ok(_) => println!("Port {} is open", port),
-                Err(_) => println!("Port {} is closed", port),
+                Ok(_) => println!("{}Port {} is open{}", GREEN, port, RESET),
+                Err(_) => println!("{}Port {} is closed{}", RED, port, RESET),
             }
         });
         handles.push(handle);
@@ -28,12 +43,31 @@ fn init_port_scan(addr: &String, list: Vec<u16>){
 }
 
 fn main(){
+    println!("\t{}{}{}",BLUE, STARING, RESET);
     let args = RuscanArgs::parse();
 
     match args.entity_type {
         EntityType::Ps(port_scan) => {
 
-            let addr = port_scan.addr; 
+            let mut addr: String = String::new(); 
+
+            if let Some(ip) = port_scan.ip {
+                addr = ip.to_string();
+            }
+
+            if let Some(domain) = port_scan.domain {
+                addr = domain.to_string();
+                let resolved = lookup_host(&addr);
+                match resolved {
+                    Ok(res) => {
+                        addr = res[0].to_string();                     
+                    },
+                    Err(_) => {
+                        println!("{}[-] Could not resolve the domain: {}{}",RED , &addr, RESET);
+                        return;
+                    }
+                }
+            }
 
             if let Some(port) = port_scan.port {
                 init_port_scan(&addr, vec![port]);
@@ -45,12 +79,12 @@ fn main(){
 
                 let start: u16 = match split.next() {
                     Some(v) => v.parse().unwrap(),
-                    _ => panic!("[-] Invalid range value, see ruscan ps --help for more information"),
+                    None => panic!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET),
                 };
 
                 let end: u16 = match split.next() {
                     Some(v) => v.parse().unwrap(),
-                    _ => panic!("[-] Invalid range value, see ruscan ps --help for more information"),
+                    None => panic!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET),
                 };
 
                 let mut list: Vec<u16> = Vec::new();
@@ -74,7 +108,7 @@ fn main(){
 
         },
         EntityType::Todo(_) => {
-          // Handle this case (if needed)
+            // TODO
         },
     }
 }
