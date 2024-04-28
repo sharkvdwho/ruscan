@@ -6,6 +6,7 @@ use std::thread::{JoinHandle, spawn};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 use std::str::FromStr;
+use chrono::{Local, Datelike, Timelike};
 use dns_lookup::lookup_host; //lookup_addr for dns lookup from 
 
 const RED : &str = "\x1b[31m";
@@ -44,6 +45,10 @@ fn init_port_scan(addr: &String, list: Vec<u16>){
 
 fn main(){
     println!("\t{}{}{}",BLUE, STARING, RESET);
+    let time = Local::now();
+    let (hour, minute, second) = (time.hour(), time.minute(), time.second());
+    let (year, month, day) = (time.year(), time.month(), time.day());
+    println!("{}Starting Ruscan ( https://github.com/sharkvdwho/ruscan ) at {}-{:02}-{:02} {:02}:{:02}:{:02}{} \n",GREEN, year, month, day, hour, minute, second, RESET);
     let args = RuscanArgs::parse();
 
     match args.entity_type {
