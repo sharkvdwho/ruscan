@@ -107,8 +107,9 @@ fn main(){
             }
 
         },
-        EntityType::Todo(_) => {
+        EntityType::UnderDevelopment(_) => {
             // TODO
+            println!("{}This program currently under development{}", RED, RESET);
         },
     }
 }
