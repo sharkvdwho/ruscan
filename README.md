@@ -1,5 +1,5 @@
 # RUSCAN
-super fast scanning tools! 
+All in one pentesting tool!
 
 ## Requirements for Compilation
 
@@ -8,11 +8,9 @@ super fast scanning tools!
 ## Instalation
 Copy and paste this into your terminal
 ```shell
-git clone https://github.com/sharkvdwho/ruscan \
-cd ruscan \
-make install
+git clone https://github.com/sharkvdwho/ruscan && cd ruscan && make install
 ```
-> :warning: **Make sure to add /home/<you_user>/.cargo/bin to your PATH variable or move .cargo/bin/ruscan to ~/.local/bin/      
+<span style="color:red">**Warning:**</span> Make sure to add /home/<you_user>/.cargo/bin to your PATH variable or just move .cargo/bin/ruscan to ~/.local/bin/      
 
 ## Usage
 
