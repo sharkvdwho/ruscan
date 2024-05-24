@@ -6,12 +6,13 @@ super fast scanning tools!
 - `rustc`, `cargo`
 
 ## Instalation
+Copy and paste this into your terminal
 ```shell
-git clone https://github.com/sharkvdwho/ruscan
-cd ruscan
-cargo install --path .
+git clone https://github.com/sharkvdwho/ruscan \
+cd ruscan \
+make install
 ```
-
+> :warning: **Make sure to add /home/<you_user>/.cargo/bin to your PATH variable or move .cargo/bin/ruscan to ~/.local/bin/      
 
 ## Usage
 
