@@ -112,9 +112,9 @@ fn main(){
             }
 
         },
-        EntityType::UnderDevelopment(_) => {
-            // TODO
-            println!("{}This program currently under development{}", RED, RESET);
-        },
+        // EntityType::UnderDevelopment(_) => {
+        //     // TODO
+        //     println!("{}This program currently under development{}", RED, RESET);
+        // },
     }
 }

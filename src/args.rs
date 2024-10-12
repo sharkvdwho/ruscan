@@ -15,8 +15,8 @@ pub struct RuscanArgs {
 pub enum EntityType {
     /// Perform network mapping of systems exposed to the Internet
     Ps(PortScan),
-    /// this going to contain other programs
-    UnderDevelopment(Enumuration)
+//     /// this going to contain other programs
+//     UnderDevelopment(Enumuration)
 }
 
 #[derive(Debug, Args)]
