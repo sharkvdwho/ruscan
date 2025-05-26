@@ -27,3 +27,4 @@ Options:
   -r, --range <RANGE>    range of ports to be scaned on the target network. Example: ruscan ps target_address -r <1-65535>
   -l, --list <LIST>      list of ports to be scaned on the target network. Example: ruscan ps target_address -l <21,80,443>
   -h, --help             Print help
+manga
