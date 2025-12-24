@@ -1,13 +1,19 @@
 mod args;
+mod network;
+mod report;
+mod service;
 
 use args::*;
 use clap::Parser;
-use std::thread::{JoinHandle, spawn};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 use std::str::FromStr;
 use chrono::{Local, Datelike, Timelike};
-use dns_lookup::lookup_host; //lookup_addr for dns lookup from 
+use dns_lookup::lookup_host;
+use report::{ReportGenerator, ScanResult};
+use network::{parse_cidr, parse_ip_range, is_valid_ip};
 
 const RED : &str = "\x1b[31m";
 const GREEN : &str = "\x1b[32m";
@@ -20,23 +26,89 @@ const STARING: &str = r"
 |  _ <| |_| |___) | |___ / ___ \| |\  |
 |_| \_\\___/|____/ \____/_/   \_\_| \_|
 
-                          by sharkvdwho
-                                      
                                       ";
 
-fn init_port_scan(addr: &String, list: Vec<u16>){
-    let mut handles: Vec<JoinHandle<()>> = vec![];
-    for port in list {
-        let host: String = format!("{}:{}", addr, port);
-        let handle: JoinHandle<()> = spawn(move || {
-            let socker_addr: SocketAddr = SocketAddr::from_str(host.as_str()).unwrap();
-            match TcpStream::connect_timeout(&socker_addr, Duration::from_secs(3)) {
-                Ok(_) => println!("{}Port {} is open{}", GREEN, port, RESET),
-                Err(_) => println!("{}Port {} is closed{}", RED, port, RESET),
+fn init_port_scan(
+    addrs: Vec<String>,
+    ports: Vec<u16>,
+    service_detection: bool,
+    max_threads: usize,
+    reporter: Arc<Mutex<ReportGenerator>>,
+) {
+    let semaphore = Arc::new(Mutex::new(0));
+    let mut handles = vec![];
+
+    for addr in addrs {
+        for port in &ports {
+            // Rate control: wait if we have too many threads
+            loop {
+                let count = *semaphore.lock().unwrap();
+                if count < max_threads {
+                    *semaphore.lock().unwrap() = count + 1;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
-        });
-        handles.push(handle);
-    }  
+
+            let addr_clone = addr.clone();
+            let port_clone = *port;
+            let reporter_clone = reporter.clone();
+            let semaphore_clone = semaphore.clone();
+
+            let handle = thread::spawn(move || {
+                let host = format!("{}:{}", addr_clone, port_clone);
+                let socket_addr = match SocketAddr::from_str(&host) {
+                    Ok(addr) => addr,
+                    Err(_) => {
+                        *semaphore_clone.lock().unwrap() -= 1;
+                        return;
+                    }
+                };
+
+                let (status, service, version) = match TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3)) {
+                    Ok(_) => {
+                        if service_detection {
+                            let (svc, ver) = service::detect_service(&socket_addr);
+                            (String::from("open"), svc, ver)
+                        } else {
+                            (String::from("open"), None, None)
+                        }
+                    }
+                    Err(_) => (String::from("closed"), None, None),
+                };
+
+                // Print result
+                if status == "open" {
+                    let service_info = if let Some(ref svc) = service {
+                        if let Some(ref ver) = version {
+                            format!(" ({}/{})", svc, ver)
+                        } else {
+                            format!(" ({})", svc)
+                        }
+                    } else {
+                        String::new()
+                    };
+                    println!("{}[+] {}:{} is open{}{}", GREEN, addr_clone, port_clone, service_info, RESET);
+                } else {
+                    println!("{}[-] {}:{} is closed{}", RED, addr_clone, port_clone, RESET);
+                }
+
+                // Add to report
+                let result = ScanResult {
+                    host: addr_clone,
+                    port: port_clone,
+                    status: status.clone(),
+                    service: service.clone(),
+                    version: version.clone(),
+                };
+                reporter_clone.lock().unwrap().add_result(result);
+
+                *semaphore_clone.lock().unwrap() -= 1;
+            });
+
+            handles.push(handle);
+        }
+    }
 
     for handle in handles {
         handle.join().unwrap();
@@ -53,68 +125,126 @@ fn main(){
 
     match args.entity_type {
         EntityType::Ps(port_scan) => {
+            let mut addrs: Vec<String> = Vec::new();
 
-            let mut addr: String = String::new(); 
-
+            // Handle single IP
             if let Some(ip) = port_scan.ip {
-                addr = ip.to_string();
+                if is_valid_ip(&ip) {
+                    addrs.push(ip);
+                } else {
+                    println!("{}[-] Invalid IP address: {}{}", RED, ip, RESET);
+                    return;
+                }
             }
 
+            // Handle domain
             if let Some(domain) = port_scan.domain {
-                addr = domain.to_string();
-                let resolved = lookup_host(&addr);
+                let resolved = lookup_host(&domain);
                 match resolved {
                     Ok(res) => {
-                        addr = res[0].to_string();                     
+                        for ip in res {
+                            addrs.push(ip.to_string());
+                        }
                     },
                     Err(_) => {
-                        println!("{}[-] Could not resolve the domain: {}{}",RED , &addr, RESET);
+                        println!("{}[-] Could not resolve the domain: {}{}", RED, domain, RESET);
                         return;
                     }
                 }
             }
 
+            // Handle CIDR notation
+            if let Some(cidr) = port_scan.cidr {
+                match parse_cidr(&cidr) {
+                    Ok(ips) => {
+                        println!("{}[+] Scanning {} IPs from CIDR: {}{}", GREEN, ips.len(), cidr, RESET);
+                        addrs.extend(ips);
+                    },
+                    Err(e) => {
+                        println!("{}[-] Error parsing CIDR: {}{}", RED, e, RESET);
+                        return;
+                    }
+                }
+            }
+
+            // Handle IP range
+            if let Some(ip_range) = port_scan.ip_range {
+                match parse_ip_range(&ip_range) {
+                    Ok(ips) => {
+                        println!("{}[+] Scanning {} IPs from range: {}{}", GREEN, ips.len(), ip_range, RESET);
+                        addrs.extend(ips);
+                    },
+                    Err(e) => {
+                        println!("{}[-] Error parsing IP range: {}{}", RED, e, RESET);
+                        return;
+                    }
+                }
+            }
+
+            if addrs.is_empty() {
+                println!("{}[-] No target address specified. Use -i, -d, -c, or -R option.{}", RED, RESET);
+                return;
+            }
+
+            // Determine ports to scan
+            let mut ports: Vec<u16> = Vec::new();
+
             if let Some(port) = port_scan.port {
-                init_port_scan(&addr, vec![port]);
+                ports.push(port);
             }
 
             if let Some(range) = port_scan.range {
-
                 let mut split = range.split("-");
-
-                let start: u16 = match split.next() {
-                    Some(v) => v.parse().unwrap(),
-                    None => panic!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET),
-                };
-
-                let end: u16 = match split.next() {
-                    Some(v) => v.parse().unwrap(),
-                    None => panic!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET),
-                };
-
-                let mut list: Vec<u16> = Vec::new();
-                (start..=end).into_iter().for_each(|x| list.push(x));
-                init_port_scan(&addr, list);
+                let start: u16 = split.next()
+                    .expect(&format!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET))
+                    .parse()
+                    .unwrap();
+                let end: u16 = split.next()
+                    .expect(&format!("{}[-] Invalid range value, see ruscan ps --help for more information{}", RED, RESET))
+                    .parse()
+                    .unwrap();
+                ports.extend(start..=end);
             }
 
             if let Some(list) = port_scan.list {
-
-                let mut ports: Vec<u16> = Vec::new();
                 let mut split = list.split(",");
-
-                loop {
-                    match split.next() {
-                        Some(v) => ports.push(v.parse().unwrap()),
-                        None => break,
+                while let Some(v) = split.next() {
+                    if let Ok(port) = v.trim().parse::<u16>() {
+                        ports.push(port);
                     }
                 }
-                init_port_scan(&addr, ports);
             }
 
+            // Default to common ports if none specified
+            if ports.is_empty() {
+                ports = vec![21, 22, 23, 25, 53, 80, 110, 143, 443, 993, 995, 3306, 3389, 5432, 8080];
+                println!("{}[+] No ports specified, scanning common ports{}", GREEN, RESET);
+            }
+
+            // Initialize reporter
+            let reporter = Arc::new(Mutex::new(ReportGenerator::new()));
+
+            // Perform scan
+            let total_scans = addrs.len() * ports.len();
+            println!("{}[+] Starting scan of {} host(s) on {} port(s) ({} total connections){}", 
+                GREEN, addrs.len(), ports.len(), total_scans, RESET);
+            println!("{}[+] Scanning...{}", BLUE, RESET);
+            
+            init_port_scan(
+                addrs.clone(),
+                ports,
+                port_scan.service_detection,
+                port_scan.threads,
+                reporter.clone(),
+            );
+
+            println!("{}[+] Scan completed{}", GREEN, RESET);
+
+            // Generate report
+            let reporter_guard = reporter.lock().unwrap();
+            if let Err(e) = reporter_guard.generate(&port_scan.output, port_scan.file.as_deref()) {
+                println!("{}[-] Error generating report: {}{}", RED, e, RESET);
+            }
         },
-        // EntityType::UnderDevelopment(_) => {
-        //     // TODO
-        //     println!("{}This program currently under development{}", RED, RESET);
-        // },
     }
 }
