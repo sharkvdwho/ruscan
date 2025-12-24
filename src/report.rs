@@ -160,6 +160,11 @@ impl ReportGenerator {
         let mut output = String::new();
         
         for result in &self.results {
+            // Only include open ports in text output
+            if result.status != "open" {
+                continue;
+            }
+            
             let service_info = if let Some(service) = &result.service {
                 if let Some(version) = &result.version {
                     format!(" ({}/{})", service, version)

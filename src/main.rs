@@ -8,7 +8,7 @@ use clap::Parser;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::str::FromStr;
 use chrono::{Local, Datelike, Timelike};
 use dns_lookup::lookup_host;
@@ -34,6 +34,7 @@ fn init_port_scan(
     service_detection: bool,
     max_threads: usize,
     reporter: Arc<Mutex<ReportGenerator>>,
+    only_open: bool,
 ) {
     let semaphore = Arc::new(Mutex::new(0));
     let mut handles = vec![];
@@ -77,7 +78,7 @@ fn init_port_scan(
                     Err(_) => (String::from("closed"), None, None),
                 };
 
-                // Print result
+                // Print result (only open ports if scanning multiple IPs)
                 if status == "open" {
                     let service_info = if let Some(ref svc) = service {
                         if let Some(ref ver) = version {
@@ -89,8 +90,9 @@ fn init_port_scan(
                         String::new()
                     };
                     println!("{}[+] {}:{} is open{}{}", GREEN, addr_clone, port_clone, service_info, RESET);
-                } else {
-                    println!("{}[-] {}:{} is closed{}", RED, addr_clone, port_clone, RESET);
+                } else if !only_open {
+                    // Only print closed ports if not scanning multiple IPs
+                    // println!("{}[-] {}:{} is closed{}", RED, addr_clone, port_clone, RESET);
                 }
 
                 // Add to report
@@ -224,11 +226,25 @@ fn main(){
             // Initialize reporter
             let reporter = Arc::new(Mutex::new(ReportGenerator::new()));
 
-            // Perform scan
+            // Determine if we should only show open ports
+            // Show only open ports if: scanning multiple IPs OR scanning a large port range (>100 ports)
             let total_scans = addrs.len() * ports.len();
+            let only_open = addrs.len() > 1 || ports.len() > 100;
+
+            // Perform scan
             println!("{}[+] Starting scan of {} host(s) on {} port(s) ({} total connections){}", 
                 GREEN, addrs.len(), ports.len(), total_scans, RESET);
+            if only_open {
+                if addrs.len() > 1 {
+                    println!("{}[+] Showing only open ports (scanning multiple IPs){}", BLUE, RESET);
+                } else {
+                    println!("{}[+] Showing only open ports (scanning large port range){}", BLUE, RESET);
+                }
+            }
             println!("{}[+] Scanning...{}", BLUE, RESET);
+            
+            // Start timing the scan
+            let start_time = Instant::now();
             
             init_port_scan(
                 addrs.clone(),
@@ -236,14 +252,19 @@ fn main(){
                 port_scan.service_detection,
                 port_scan.threads,
                 reporter.clone(),
+                only_open,
             );
 
-            println!("{}[+] Scan completed{}", GREEN, RESET);
+            // Calculate elapsed time in seconds with millisecond precision (3 decimal places)
+            let elapsed = start_time.elapsed().as_secs_f64();
+            println!("{}[+] Scan completed in {:.3} seconds{}", GREEN, elapsed, RESET);
 
-            // Generate report
+            // Generate report (only if saving to file or using non-text format)
             let reporter_guard = reporter.lock().unwrap();
-            if let Err(e) = reporter_guard.generate(&port_scan.output, port_scan.file.as_deref()) {
-                println!("{}[-] Error generating report: {}{}", RED, e, RESET);
+            if port_scan.file.is_some() || port_scan.output.to_lowercase() != "text" {
+                if let Err(e) = reporter_guard.generate(&port_scan.output, port_scan.file.as_deref()) {
+                    println!("{}[-] Error generating report: {}{}", RED, e, RESET);
+                }
             }
         },
     }
